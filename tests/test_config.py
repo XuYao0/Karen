@@ -1,3 +1,7 @@
+from importlib import import_module
+from pathlib import Path
+import tomllib
+
 import pytest
 
 from companion_bot.config import (
@@ -39,3 +43,19 @@ def test_load_chat_settings_uses_default_memory_url(monkeypatch):
 
 def test_normalize_base_url_strips_trailing_slash():
     assert normalize_base_url("http://localhost:8000/") == "http://localhost:8000"
+
+
+def test_setuptools_packages_include_service_subpackage():
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text())
+
+    assert data["tool"]["setuptools"]["packages"] == [
+        "companion_bot",
+        "companion_bot.services",
+    ]
+
+
+def test_service_module_is_importable():
+    module = import_module("companion_bot.services.memory")
+
+    assert module is not None

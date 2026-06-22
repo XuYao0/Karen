@@ -26,4 +26,4 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.setuptools]
-packages = ["companion_bot"]
+packages = ["companion_bot", "companion_bot.services"]

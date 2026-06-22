@@ -121,6 +121,10 @@ Expected: FAIL during import because `companion_bot.config` does not exist.
 Create `pyproject.toml`:
 
 ```toml
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "companion-bot"
 version = "0.1.0"
@@ -143,6 +147,9 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.setuptools]
+packages = ["companion_bot", "companion_bot.services"]
 ```
 
 - [ ] **Step 4: Add configuration implementation**
@@ -338,6 +345,8 @@ Create `companion_bot/services/memory.py`:
 
 ```python
 from collections import defaultdict
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -365,13 +374,16 @@ class StoreMemoryResponse(BaseModel):
     stored: bool
 
 
-app = FastAPI(title="companion-memory-service")
 _memory_store: dict[str, list[MemoryRecord]] = defaultdict(list)
 
 
-@app.on_event("startup")
-async def clear_memory_store() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _memory_store.clear()
+    yield
+
+
+app = FastAPI(title="companion-memory-service", lifespan=lifespan)
 
 
 @app.get("/v1/users/{user_id}/memories", response_model=MemoriesResponse)
@@ -945,6 +957,10 @@ Default local service URLs:
 
 - memory-service: `http://127.0.0.1:8001`
 - chat-service: `http://127.0.0.1:8002`
+
+Required environment variables:
+
+- `TELEGRAM_BOT_TOKEN` for `telegram-gateway`
 
 Optional environment variables:
 

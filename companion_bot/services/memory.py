@@ -1,4 +1,6 @@
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -26,13 +28,16 @@ class StoreMemoryResponse(BaseModel):
     stored: bool
 
 
-app = FastAPI(title="companion-memory-service")
 _memory_store: dict[str, list[MemoryRecord]] = defaultdict(list)
 
 
-@app.on_event("startup")
-async def clear_memory_store() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _memory_store.clear()
+    yield
+
+
+app = FastAPI(title="companion-memory-service", lifespan=lifespan)
 
 
 @app.get("/v1/users/{user_id}/memories", response_model=MemoriesResponse)

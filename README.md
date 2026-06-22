@@ -31,6 +31,10 @@ Default local service URLs:
 - memory-service: `http://127.0.0.1:8001`
 - chat-service: `http://127.0.0.1:8002`
 
+Required environment variables:
+
+- `TELEGRAM_BOT_TOKEN` only for `telegram-gateway`
+
 Optional environment variables:
 
 - `CHAT_SERVICE_URL`
