@@ -1,0 +1,1 @@
+"""Companion bot service package."""
