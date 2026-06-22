@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import json
 
 import httpx
 import pytest
@@ -22,6 +24,7 @@ class FakeUser:
 @dataclass
 class FakeMessage:
     text: str | None = None
+    date: datetime | None = None
     replies: list[str] = field(default_factory=list)
 
     async def reply_text(self, text: str) -> None:
@@ -42,7 +45,7 @@ class FakeBotDataContext:
 @respx.mock
 @pytest.mark.asyncio
 async def test_fetch_chat_reply_calls_chat_service():
-    respx.post("http://chat.test/v1/chat/reply").mock(
+    route = respx.post("http://chat.test/v1/chat/reply").mock(
         return_value=httpx.Response(200, json={"reply_text": "warm reply"})
     )
 
@@ -53,6 +56,11 @@ async def test_fetch_chat_reply_calls_chat_service():
     )
 
     assert reply == "warm reply"
+    assert json.loads(route.calls.last.request.content) == {
+        "user_id": "telegram:123",
+        "channel": "telegram",
+        "message_text": "hello",
+    }
 
 
 @pytest.mark.asyncio
@@ -82,6 +90,28 @@ async def test_handle_text_message_forwards_to_chat_service():
     await handle_text_message(update, context)
 
     assert update.message.replies == ["I'm listening."]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_handle_text_message_forwards_utc_message_timestamp():
+    route = respx.post("http://chat.test/v1/chat/reply").mock(
+        return_value=httpx.Response(200, json={"reply_text": "I'm listening."})
+    )
+    update = FakeUpdate(
+        effective_user=FakeUser(id=123),
+        message=FakeMessage(
+            text="你好",
+            date=datetime(2026, 6, 22, 6, 46, tzinfo=timezone.utc),
+        ),
+    )
+    context = FakeBotDataContext(bot_data={"chat_service_url": "http://chat.test"})
+
+    await handle_text_message(update, context)
+
+    assert json.loads(route.calls.last.request.content)["message_timestamp"] == (
+        "2026-06-22T06:46:00+00:00"
+    )
 
 
 @respx.mock

@@ -1,109 +1,36 @@
-# Task 4: Telegram Gateway 报告
+# Task 4 Report: Telegram UTC Timestamp Forwarding
 
 ## 实现内容
-
-- 新增 `companion_bot/telegram_gateway.py`，实现 Telegram 长轮询入口。
-- 实现 `/start`、文本消息、非文本消息三个 handler。
-- 文本消息通过 HTTP 调用 `chat-service` 的 `POST /v1/chat/reply`。
-- `chat-service` 失败时回退到本地 fallback reply，不把异常抛到 Telegram 层。
-- `main()` 通过 `load_gateway_settings()` 读取 token 和 `chat_service_url`，再启动 `Application.run_polling()`。
+- 在 `companion_bot/telegram_gateway.py` 中新增 `serialize_message_timestamp(update)`，把 `update.message.date` 转成 UTC `ISO 8601` 字符串。
+- `fetch_chat_reply()` 增加可选参数 `message_timestamp`，在存在时写入 chat-service 请求 JSON。
+- `handle_text_message()` 读取 Telegram 消息时间戳并透传给 `fetch_chat_reply()`。
+- 在 `tests/test_telegram_gateway.py` 中补充：
+  - `FakeMessage.date`
+  - 时间戳转发测试
+  - 直接调用 `fetch_chat_reply()` 的请求体兼容性断言
 
 ## 测试命令和结果
-
-### RED
-
-命令：
-
-```bash
-/home/xuyao/karen/.worktrees/telegram-http-rest-multiservice-dev/.venv/bin/pytest tests/test_telegram_gateway.py -v
-```
-
-结果：
-
-- 收集阶段失败，错误为 `ModuleNotFoundError: No module named 'companion_bot.telegram_gateway'`
-- 这说明测试先于实现失败，符合 TDD 预期
-
-### GREEN
-
-命令：
-
-```bash
-/home/xuyao/karen/.worktrees/telegram-http-rest-multiservice-dev/.venv/bin/pytest tests/test_telegram_gateway.py -v
-```
-
-结果：
-
-- `5 passed`
-
-### 回归检查
-
-命令：
-
-```bash
-/home/xuyao/karen/.worktrees/telegram-http-rest-multiservice-dev/.venv/bin/pytest -v
-```
-
-结果：
-
-- `13 passed`
-- 额外有 3 条既有弃用警告，来自 FastAPI / Starlette 的已知兼容提示，不影响本任务验收
+- ` .venv/bin/python -m pytest tests/test_telegram_gateway.py -v `
+  - 结果：`7 passed`
 
 ## TDD Evidence
+### RED
+- 命令：` .venv/bin/python -m pytest tests/test_telegram_gateway.py::test_handle_text_message_forwards_utc_message_timestamp -v `
+- 结果：失败，最初失败点是测试读取请求体方式不对，修正后稳定失败于 `KeyError: 'message_timestamp'`，证明 gateway 还没有传该字段。
 
-- RED：`tests/test_telegram_gateway.py` 在 import 阶段因 `companion_bot.telegram_gateway` 不存在而失败。
-- GREEN：补齐 `companion_bot/telegram_gateway.py` 后，5 个 gateway 用例全部通过。
+### GREEN
+- 先实现 `serialize_message_timestamp()` 与 `message_timestamp` 透传。
+- 再运行同一组 gateway 测试，结果：`7 passed`。
 
 ## 变更文件
-
 - `companion_bot/telegram_gateway.py`
 - `tests/test_telegram_gateway.py`
-- `.superpowers/sdd/task-4-report.md`
 
 ## 自查结论
-
-- Telegram 相关逻辑只存在于 gateway 模块，没有下沉到 chat service 或 memory service。
-- `/start`、文本消息、非文本消息三条路径都被覆盖。
-- chat-service 失败时会走本地 fallback reply。
-- 聚焦测试和全量测试都通过，没有引入回归。
+- 仅修改了本任务允许的两个文件。
+- 未改动 chat service、LLM client 或 README。
+- 默认请求体仍保持原有字段；带 `date` 时新增 `message_timestamp`。
+- `message_timestamp` 使用 UTC `+00:00` 格式，符合 brief 示例。
 
 ## 疑虑
-
-- 全量测试里保留了现有 FastAPI / Starlette 弃用警告，属于仓库既有噪声，不是本任务新增问题。
-
-## Reviewer 修复补充
-
-本次按 reviewer findings 做了两处修复：
-
-- `build_application()` 新增 `MessageHandler(filters.COMMAND, handle_unsupported_message)`，让未识别的 Telegram 命令，例如 `/help`，走现有 unsupported 文案。
-- `handle_text_message()` 的 chat-service fallback 日志从 `logger.exception` 改为 `logger.warning`，保留 `user_id` 上下文但不再输出预期故障堆栈。
-
-### RED / GREEN 证据
-
-RED 命令：
-
-```bash
-.venv/bin/pytest tests/test_telegram_gateway.py -q
-```
-
-RED 结果：
-
-- `test_build_application_routes_unknown_commands_to_unsupported_message` 失败
-- 失败点是 `build_application()` 还没有把未知命令路由到 `handle_unsupported_message`
-
-GREEN 命令：
-
-```bash
-.venv/bin/pytest tests/test_telegram_gateway.py -q
-.venv/bin/pytest -q
-```
-
-GREEN 结果：
-
-- `tests/test_telegram_gateway.py`: `6 passed`
-- 全量测试：`14 passed, 3 warnings`
-
-### 变更文件
-
-- `companion_bot/telegram_gateway.py`
-- `tests/test_telegram_gateway.py`
-- `.superpowers/sdd/task-4-report.md`
+- 无。
