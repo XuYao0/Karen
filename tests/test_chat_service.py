@@ -1,10 +1,24 @@
 import json
 
 import httpx
+import pytest
 import respx
 from fastapi.testclient import TestClient
 
 from companion_bot.services.chat import app
+
+
+@pytest.fixture(autouse=True)
+def clear_llm_env(monkeypatch):
+    for key in (
+        "DEEPSEEK_API_KEY",
+        "LLM_PROVIDER",
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "LLM_REASONING_EFFORT",
+        "LLM_THINKING_ENABLED",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 @respx.mock
@@ -67,7 +81,9 @@ def test_chat_reply_uses_deepseek_latest_message_only(monkeypatch):
 
 
 @respx.mock
-def test_chat_reply_uses_transparent_fallback_when_deepseek_fails(monkeypatch):
+def test_chat_reply_logs_provider_model_and_error_type_on_llm_failure(
+    monkeypatch, caplog
+):
     monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
     respx.get("http://memory.test/v1/users/telegram:123/memories").mock(
@@ -80,6 +96,7 @@ def test_chat_reply_uses_transparent_fallback_when_deepseek_fails(monkeypatch):
         return_value=httpx.Response(503, json={"detail": "unavailable"})
     )
 
+    caplog.clear()
     with TestClient(app) as client:
         response = client.post(
             "/v1/chat/reply",
@@ -95,6 +112,51 @@ def test_chat_reply_uses_transparent_fallback_when_deepseek_fails(monkeypatch):
     assert response.json() == {
         "reply_text": "我在认真想怎么回应你，但刚刚有点卡住了。你可以再发我一次，我会继续陪你。"
     }
+    log_text = caplog.text
+    assert "Failed to generate LLM reply" in log_text
+    assert "provider=deepseek" in log_text
+    assert "model=deepseek-v4-pro" in log_text
+    assert "user_id=telegram:123" in log_text
+    assert "channel=telegram" in log_text
+    assert "error_type=LLMClientError" in log_text
+    assert "deepseek-key" not in log_text
+
+
+@respx.mock
+def test_chat_reply_logs_unknown_provider_and_model_on_settings_failure(
+    monkeypatch, caplog
+):
+    monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
+    respx.get("http://memory.test/v1/users/telegram:123/memories").mock(
+        return_value=httpx.Response(200, json={"user_id": "telegram:123", "memories": []})
+    )
+    respx.post("http://memory.test/v1/users/telegram:123/memories").mock(
+        return_value=httpx.Response(200, json={"stored": True})
+    )
+
+    caplog.clear()
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/reply",
+            json={
+                "user_id": "telegram:123",
+                "channel": "telegram",
+                "message_text": "你好",
+                "message_timestamp": "2026-06-22T06:46:00+00:00",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "reply_text": "我在认真想怎么回应你，但刚刚有点卡住了。你可以再发我一次，我会继续陪你。"
+    }
+    log_text = caplog.text
+    assert "Failed to generate LLM reply" in log_text
+    assert "provider=unknown" in log_text
+    assert "model=unknown" in log_text
+    assert "user_id=telegram:123" in log_text
+    assert "channel=telegram" in log_text
+    assert "error_type=RuntimeError" in log_text
 
 
 @respx.mock

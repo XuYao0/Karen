@@ -19,7 +19,7 @@ python -m companion_bot.services.memory
 ```
 
 ```bash
-python -m companion_bot.services.chat
+DEEPSEEK_API_KEY=your-key python -m companion_bot.services.chat
 ```
 
 ```bash

@@ -15,6 +15,19 @@ from companion_bot.config import (
 from companion_bot.http import normalize_base_url
 
 
+@pytest.fixture(autouse=True)
+def clear_llm_env(monkeypatch):
+    for key in (
+        "DEEPSEEK_API_KEY",
+        "LLM_PROVIDER",
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "LLM_REASONING_EFFORT",
+        "LLM_THINKING_ENABLED",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 def test_load_gateway_settings_requires_token(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("CHAT_SERVICE_URL", raising=False)

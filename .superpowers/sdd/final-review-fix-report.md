@@ -2,100 +2,105 @@
 
 ## 修复内容
 
-1. 修复 `pyproject.toml` 的 setuptools 打包配置，显式包含 `companion_bot.services` 子包。
-2. 在 `tests/test_config.py` 增加 packaging/import smoke：
-   - 断言 `pyproject.toml` 中 `tool.setuptools.packages` 包含 `companion_bot.services`
-   - 断言 `companion_bot.services.memory` 可导入
-3. 将 `companion_bot/services/memory.py` 从 `@app.on_event("startup")` 迁移到 FastAPI lifespan context manager，并保留启动时清空 `_memory_store` 的行为。
-4. 在 `tests/test_memory_service.py` 增加启动阶段清空旧内存数据的回归测试。
-5. 在 `README.md` 增加 Required environment variables 小节，明确 `TELEGRAM_BOT_TOKEN` 仅 `telegram-gateway` 需要。
-6. 保留并纳入 `docs/superpowers/plans/2026-06-22-telegram-http-rest-multiservice.md` 的既有计划更新。
+1. 在 `companion_bot/services/chat.py` 的 LLM fallback 路径补齐诊断日志字段：
+   - `provider`
+   - `model`
+   - `user_id`
+   - `channel`
+   - `error_type`
+2. 对配置加载失败场景使用 `provider=unknown`、`model=unknown`，同时记录真实异常类型 `RuntimeError`。
+3. 保持日志不输出 `DEEPSEEK_API_KEY` 或 `settings.api_key`，并增加回归测试防止 secret 泄漏。
+4. 在 `tests/test_chat_service.py` 与 `tests/test_config.py` 新增 `autouse` fixture，统一清理：
+   - `DEEPSEEK_API_KEY`
+   - `LLM_PROVIDER`
+   - `LLM_BASE_URL`
+   - `LLM_MODEL`
+   - `LLM_REASONING_EFFORT`
+   - `LLM_THINKING_ENABLED`
+5. 在 `README.md` 明确 `chat-service` 启动示例需要 `DEEPSEEK_API_KEY=...`。
+6. 按“文档先行”补充本次修复的设计文档与实施计划：
+   - `docs/superpowers/specs/2026-06-22-llm-fallback-diagnostics-design.md`
+   - `docs/superpowers/plans/2026-06-22-llm-fallback-diagnostics.md`
 
-## TDD / 验证证据
+## RED / GREEN 证据
 
 ### Red
 
-先写测试后运行：
+先改测试，再运行：
 
 ```bash
-.venv/bin/python -m pytest tests/test_config.py tests/test_memory_service.py -v
+.venv/bin/python -m pytest tests/test_chat_service.py tests/test_config.py -v
 ```
 
-结果：
+结果：失败，`2 failed, 18 passed`
 
-- `tests/test_config.py::test_setuptools_packages_include_service_subpackage` 失败
-- 失败原因：`pyproject.toml` 里只有 `["companion_bot"]`
-- warnings 中出现 `companion_bot/services/memory.py` 的 `on_event` 弃用告警
+失败点：
+
+- `tests/test_chat_service.py::test_chat_reply_logs_provider_model_and_error_type_on_llm_failure`
+  - 原因：日志里没有 `provider=deepseek`、`model=deepseek-v4-pro`、`error_type=LLMClientError`
+- `tests/test_chat_service.py::test_chat_reply_logs_unknown_provider_and_model_on_settings_failure`
+  - 原因：日志里没有 `provider=unknown`、`model=unknown`、`error_type=RuntimeError`
+
+这证明 reviewer 指出的日志缺口真实存在。
 
 ### Green
 
-实现最小修复后重跑：
+最小实现后重跑同一命令：
 
 ```bash
-.venv/bin/python -m pytest tests/test_config.py tests/test_memory_service.py -v
+.venv/bin/python -m pytest tests/test_chat_service.py tests/test_config.py -v
 ```
 
-结果：`9 passed, 1 warning`
+结果：通过，`20 passed, 1 warning`
 
-- 新 warning 仅剩 FastAPI/TestClient 对上游 `httpx` 兼容层的第三方弃用告警
-- `memory.py` 自身的 `on_event` 弃用告警已消失
+说明：
+
+- fallback 日志现在能区分配置错误与 LLM client 错误
+- 日志断言确认未出现 `deepseek-key`
+- env 清理 fixture 生效，相关测试不再依赖外部环境预置值
 
 ## 测试命令和结果
 
-1. 定向回归测试
+1. 定向回归：
 
 ```bash
-.venv/bin/python -m pytest tests/test_config.py tests/test_memory_service.py -v
+.venv/bin/python -m pytest tests/test_chat_service.py tests/test_config.py -v
 ```
 
-结果：通过，`9 passed, 1 warning`
+结果：通过，`20 passed, 1 warning`
 
-2. 全量测试
+2. 全量回归：
 
 ```bash
 .venv/bin/python -m pytest -v
 ```
 
-结果：通过，`17 passed, 1 warning`
+结果：通过，`35 passed, 1 warning`
 
-3. packaging smoke 额外检查
+3. warning 说明：
 
-尝试运行：
-
-```bash
-.venv/bin/python -m pip wheel . --no-deps -w /tmp/karen-wheel-smoke
-```
-
-结果：当前 `.venv` 中没有 `pip` 模块，命令失败：`No module named pip`
-
-额外确认：
-
-```bash
-.venv/bin/python -c "import build; print(build.__file__)"
-```
-
-结果：当前 `.venv` 中没有 `build` 模块
-
-结论：本地缺少现成的构建工具链，因此本次以 pytest 中的 packaging/import smoke 作为回归覆盖；同时该测试已在旧配置下实际失败，能证明修复必要性。
+- 唯一 warning 来自 `fastapi.testclient` / `starlette.testclient` 对 `httpx` 兼容层的第三方弃用告警，不属于本次 review finding 范围。
 
 ## 变更文件
 
-- `pyproject.toml`
-- `companion_bot/services/memory.py`
+- `companion_bot/services/chat.py`
+- `tests/test_chat_service.py`
 - `tests/test_config.py`
-- `tests/test_memory_service.py`
 - `README.md`
-- `docs/superpowers/plans/2026-06-22-telegram-http-rest-multiservice.md`
+- `docs/superpowers/specs/2026-06-22-llm-fallback-diagnostics-design.md`
+- `docs/superpowers/plans/2026-06-22-llm-fallback-diagnostics.md`
+- `.superpowers/sdd/final-review-fix-report.md`
 
 ## 自查结论
 
-- 修复范围限制在 review findings 指定文件内
-- 未修改 chat service 或 telegram gateway 行为
-- 打包配置、memory lifespan 行为、README 说明均已覆盖到测试或文档
-- 全量测试通过
-- 未计划提交 `__pycache__`、`.venv`、测试缓存等生成物
+- 修改范围符合任务约束，没有跨到 Telegram gateway 或 LLM client。
+- TDD 顺序满足要求：先写测试，拿到 RED，再补最小实现转 GREEN。
+- fallback 日志现在覆盖 reviewer 要求的全部字段。
+- 配置失败时按要求记录 `unknown` 占位值。
+- README 启动说明已补齐真实依赖。
+- 未纳入 `__pycache__`、`.pytest_cache`、`.venv` 等生成物。
 
 ## 疑虑
 
-1. 当前测试环境仍有一条来自 `fastapi.testclient` / `starlette.testclient` 对 `httpx` 兼容层的第三方弃用告警；这不是本次 review finding 范围内的问题。
-2. 由于 `.venv` 缺少 `pip`/`build`，无法在本地直接完成 wheel 构建级 smoke；不过已有真实 red-green 的 packaging 配置测试覆盖该回归点。
+1. 当前实现使用 `logger.exception()` 输出 traceback；本次仓内异常路径没有携带 API key，因此新增回归能覆盖当前 secret 泄漏风险，但未来若下游异常 message 拼接敏感信息，仍建议统一引入日志脱敏策略。
+2. 全量测试仍存在一条上游第三方弃用 warning，本次未处理。

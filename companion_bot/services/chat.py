@@ -80,8 +80,12 @@ async def store_interaction_note(user_id: str, memory_service_url: str) -> None:
 
 
 async def build_reply(request: ChatReplyRequest) -> str:
+    provider = "unknown"
+    model = "unknown"
     try:
         settings = load_llm_settings()
+        provider = settings.provider
+        model = settings.model
         return await generate_chat_reply(
             messages=[
                 ChatMessage(role="system", content=SYSTEM_PROMPT),
@@ -89,11 +93,15 @@ async def build_reply(request: ChatReplyRequest) -> str:
             ],
             settings=settings,
         )
-    except (RuntimeError, LLMClientError):
+    except (RuntimeError, LLMClientError) as exc:
         logger.exception(
-            "Failed to generate LLM reply for user_id=%s channel=%s",
+            "Failed to generate LLM reply for provider=%s model=%s user_id=%s "
+            "channel=%s error_type=%s",
+            provider,
+            model,
             request.user_id,
             request.channel,
+            type(exc).__name__,
         )
         return LLM_FALLBACK_REPLY
 
