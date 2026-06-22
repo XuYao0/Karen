@@ -299,7 +299,7 @@ def test_post_memory_stores_record_for_user():
             "/v1/users/telegram:123/memories",
             json={
                 "kind": "interaction_note",
-                "content": "User sent a message through Telegram.",
+                "content": "User sent a message through a chat channel.",
                 "source": "chat-service",
             },
         )
@@ -313,7 +313,7 @@ def test_post_memory_stores_record_for_user():
         "memories": [
             {
                 "kind": "interaction_note",
-                "content": "User sent a message through Telegram.",
+                "content": "User sent a message through a chat channel.",
                 "source": "chat-service",
             }
         ],
@@ -568,7 +568,7 @@ async def store_interaction_note(user_id: str, memory_service_url: str) -> None:
                 f"{memory_service_url}/v1/users/{user_id}/memories",
                 json={
                     "kind": "interaction_note",
-                    "content": "User sent a message through Telegram.",
+                    "content": "User sent a message through a chat channel.",
                     "source": "chat-service",
                 },
             )
@@ -757,6 +757,20 @@ async def test_handle_unsupported_message_gently_declines():
     assert update.message.replies == [
         "I can only read text right now, but you can send me a message in words."
     ]
+
+
+@pytest.mark.asyncio
+async def test_handle_unknown_command_gently_declines():
+    update = FakeUpdate(
+        effective_user=FakeUser(id=123), message=FakeMessage(text="/help")
+    )
+    context = FakeBotDataContext(bot_data={"chat_service_url": "http://chat.test"})
+
+    await handle_unsupported_message(update, context)
+
+    assert update.message.replies == [
+        "I can only read text right now, but you can send me a message in words."
+    ]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -849,6 +863,7 @@ async def handle_unsupported_message(
 def build_application(token: str) -> Application:
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("start", handle_start))
+    application.add_handler(MessageHandler(filters.COMMAND, handle_unsupported_message))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message)
     )
@@ -957,7 +972,7 @@ Store memory:
 ```bash
 curl -X POST http://127.0.0.1:8001/v1/users/telegram:123/memories \
   -H 'Content-Type: application/json' \
-  -d '{"kind":"interaction_note","content":"User sent a message through Telegram.","source":"chat-service"}'
+  -d '{"kind":"interaction_note","content":"User sent a message through a chat channel.","source":"chat-service"}'
 ```
 ```
 
@@ -979,4 +994,3 @@ Expected: only intentional files are modified or untracked before the final comm
 git add README.md
 git commit -m "docs: document local service usage"
 ```
-

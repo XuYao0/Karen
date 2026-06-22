@@ -118,7 +118,7 @@ Request:
 ```json
 {
   "kind": "interaction_note",
-  "content": "User sent a message through Telegram.",
+  "content": "User sent a message through a chat channel.",
   "source": "chat-service"
 }
 ```
@@ -183,4 +183,3 @@ External network tests against the real Telegram API are out of scope for the fi
 - Use `httpx` for service-to-service HTTP calls.
 - Keep service modules small and independently testable.
 - Use typed request and response models for REST boundaries.
-
