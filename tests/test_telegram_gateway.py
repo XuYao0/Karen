@@ -3,8 +3,10 @@ from dataclasses import dataclass, field
 import httpx
 import pytest
 import respx
+from telegram.ext import MessageHandler, filters
 
 from companion_bot.telegram_gateway import (
+    build_application,
     fetch_chat_reply,
     handle_start,
     handle_text_message,
@@ -111,3 +113,15 @@ async def test_handle_unsupported_message_gently_declines():
     assert update.message.replies == [
         "I can only read text right now, but you can send me a message in words."
     ]
+
+
+def test_build_application_routes_unknown_commands_to_unsupported_message():
+    application = build_application(token="test-token")
+
+    command_handlers = application.handlers[0]
+    assert any(
+        isinstance(handler, MessageHandler)
+        and handler.callback is handle_unsupported_message
+        and handler.filters == filters.COMMAND
+        for handler in command_handlers
+    )

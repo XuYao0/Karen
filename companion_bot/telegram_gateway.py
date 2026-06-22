@@ -53,7 +53,7 @@ async def handle_text_message(
     try:
         reply_text = await fetch_chat_reply(user_id, message_text, chat_service_url)
     except (httpx.HTTPError, KeyError, TypeError, ValueError):
-        logger.exception("Failed to fetch chat reply for user_id=%s", user_id)
+        logger.warning("Failed to fetch chat reply for user_id=%s", user_id)
         reply_text = CHAT_FALLBACK_REPLY
 
     await update.message.reply_text(reply_text)
@@ -70,6 +70,7 @@ async def handle_unsupported_message(
 def build_application(token: str) -> Application:
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("start", handle_start))
+    application.add_handler(MessageHandler(filters.COMMAND, handle_unsupported_message))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message)
     )

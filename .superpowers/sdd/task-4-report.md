@@ -69,3 +69,41 @@
 ## 疑虑
 
 - 全量测试里保留了现有 FastAPI / Starlette 弃用警告，属于仓库既有噪声，不是本任务新增问题。
+
+## Reviewer 修复补充
+
+本次按 reviewer findings 做了两处修复：
+
+- `build_application()` 新增 `MessageHandler(filters.COMMAND, handle_unsupported_message)`，让未识别的 Telegram 命令，例如 `/help`，走现有 unsupported 文案。
+- `handle_text_message()` 的 chat-service fallback 日志从 `logger.exception` 改为 `logger.warning`，保留 `user_id` 上下文但不再输出预期故障堆栈。
+
+### RED / GREEN 证据
+
+RED 命令：
+
+```bash
+.venv/bin/pytest tests/test_telegram_gateway.py -q
+```
+
+RED 结果：
+
+- `test_build_application_routes_unknown_commands_to_unsupported_message` 失败
+- 失败点是 `build_application()` 还没有把未知命令路由到 `handle_unsupported_message`
+
+GREEN 命令：
+
+```bash
+.venv/bin/pytest tests/test_telegram_gateway.py -q
+.venv/bin/pytest -q
+```
+
+GREEN 结果：
+
+- `tests/test_telegram_gateway.py`: `6 passed`
+- 全量测试：`14 passed, 3 warnings`
+
+### 变更文件
+
+- `companion_bot/telegram_gateway.py`
+- `tests/test_telegram_gateway.py`
+- `.superpowers/sdd/task-4-report.md`
