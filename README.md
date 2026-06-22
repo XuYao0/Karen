@@ -53,7 +53,7 @@ Chat reply:
 ```bash
 curl -X POST http://127.0.0.1:8002/v1/chat/reply \
   -H 'Content-Type: application/json' \
-  -d '{"user_id":"telegram:123","channel":"telegram","message_text":"I had a hard day."}'
+  -d '{"user_id":"telegram:123","channel":"telegram","message_text":"I had a hard day.","message_timestamp":"2026-06-22T06:46:00+00:00"}'
 ```
 
 Read memories:

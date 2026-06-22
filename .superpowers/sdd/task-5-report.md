@@ -36,3 +36,8 @@
 
 - 当前 worktree 仍有预先存在的 `__pycache__` 未跟踪目录，未处理，因为它们不属于本任务的文档范围。
 - 未执行真实 DeepSeek 网络 smoke test，属于按任务要求保留的未验证项。
+
+## 追加修复记录
+
+- 按 reviewer 指出的问题，已将 `README.md` 的主 `Chat reply` 示例补上 `message_timestamp`，并使用与 `LLM Smoke Test` 一致的 UTC ISO 8601 时间戳，统一请求形状。
+- 已重新核对 `README.md` 中 `Chat reply` 与 `LLM Smoke Test` 两处示例，字段结构一致。
