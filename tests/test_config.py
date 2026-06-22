@@ -7,8 +7,10 @@ import pytest
 from companion_bot.config import (
     ChatSettings,
     GatewaySettings,
+    LLMSettings,
     load_chat_settings,
     load_gateway_settings,
+    load_llm_settings,
 )
 from companion_bot.http import normalize_base_url
 
@@ -59,3 +61,70 @@ def test_service_module_is_importable():
     module = import_module("companion_bot.services.memory")
 
     assert module is not None
+
+
+def test_load_llm_settings_requires_deepseek_api_key(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        load_llm_settings()
+
+
+def test_load_llm_settings_uses_deepseek_defaults(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("LLM_THINKING_ENABLED", raising=False)
+
+    settings = load_llm_settings()
+
+    assert settings == LLMSettings(
+        provider="deepseek",
+        api_key="deepseek-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-pro",
+        reasoning_effort="high",
+        thinking_enabled=True,
+    )
+
+
+def test_load_llm_settings_normalizes_base_url(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com/")
+
+    settings = load_llm_settings()
+
+    assert settings.base_url == "https://api.deepseek.com"
+
+
+def test_load_llm_settings_rejects_unsupported_provider(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+
+    with pytest.raises(RuntimeError, match="Unsupported LLM_PROVIDER"):
+        load_llm_settings()
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("true", True),
+        ("1", True),
+        ("yes", True),
+        ("false", False),
+        ("0", False),
+        ("no", False),
+    ],
+)
+def test_load_llm_settings_parses_thinking_enabled(
+    monkeypatch, raw_value, expected
+):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setenv("LLM_THINKING_ENABLED", raw_value)
+
+    settings = load_llm_settings()
+
+    assert settings.thinking_enabled is expected
