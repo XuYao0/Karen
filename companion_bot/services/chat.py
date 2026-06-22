@@ -60,7 +60,7 @@ async def store_interaction_note(user_id: str, memory_service_url: str) -> None:
                 f"{memory_service_url}/v1/users/{user_id}/memories",
                 json={
                     "kind": "interaction_note",
-                    "content": "User sent a message through Telegram.",
+                    "content": "User sent a message through a chat channel.",
                     "source": "chat-service",
                 },
             )

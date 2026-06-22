@@ -28,3 +28,10 @@
 
 ## 疑虑
 - 无
+
+## 本次修复补充记录
+- 修复内容：将 `companion_bot/services/chat.py` 写入 memory 的 interaction note 文案从 `"User sent a message through Telegram."` 改为渠道中立的 `"User sent a message through a chat channel."`，避免 chat service 泄漏 Telegram 语义。
+- 测试补强：在 `tests/test_chat_service.py` 中新增对 memory POST 载荷的断言，明确校验 `content` 字段为渠道中立文案。
+- RED 证据：运行 `/home/xuyao/karen/.worktrees/telegram-http-rest-multiservice-dev/.venv/bin/pytest tests/test_chat_service.py -v`，`test_chat_reply_reads_and_writes_memory` 失败，断言显示实际 `content` 仍为 `"User sent a message through Telegram."`。
+- GREEN 证据：修复后再次运行同一命令，`2 passed`。
+- 变更文件：`companion_bot/services/chat.py`、`tests/test_chat_service.py`

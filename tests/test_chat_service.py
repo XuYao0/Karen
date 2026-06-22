@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import respx
 from fastapi.testclient import TestClient
@@ -35,11 +37,16 @@ def test_chat_reply_reads_and_writes_memory(monkeypatch):
                 "channel": "telegram",
                 "message_text": "I had a hard day.",
             },
-        )
+    )
 
     assert response.status_code == 200
     assert "I'm here with you" in response.json()["reply_text"]
     assert post_route.called
+    assert json.loads(post_route.calls[0].request.content) == {
+        "kind": "interaction_note",
+        "content": "User sent a message through a chat channel.",
+        "source": "chat-service",
+    }
 
 
 @respx.mock
