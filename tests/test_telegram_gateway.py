@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import os
+import time
 
 import httpx
 import pytest
@@ -13,6 +15,7 @@ from companion_bot.telegram_gateway import (
     handle_start,
     handle_text_message,
     handle_unsupported_message,
+    serialize_message_timestamp,
 )
 
 
@@ -112,6 +115,28 @@ async def test_handle_text_message_forwards_utc_message_timestamp():
     assert json.loads(route.calls.last.request.content)["message_timestamp"] == (
         "2026-06-22T06:46:00+00:00"
     )
+
+
+def test_serialize_message_timestamp_treats_naive_datetime_as_utc(monkeypatch):
+    original_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+    try:
+        update = FakeUpdate(
+            effective_user=FakeUser(id=123),
+            message=FakeMessage(date=datetime(2026, 6, 22, 6, 46)),
+        )
+
+        assert serialize_message_timestamp(update) == "2026-06-22T06:46:00+00:00"
+    finally:
+        if original_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", original_tz)
+        if hasattr(time, "tzset"):
+            time.tzset()
 
 
 @respx.mock

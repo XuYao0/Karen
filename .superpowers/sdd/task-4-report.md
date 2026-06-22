@@ -34,3 +34,32 @@
 
 ## 疑虑
 - 无。
+
+---
+
+# Task 4 Follow-up: Naive Telegram Timestamp Handling
+
+## 修复内容
+- 在 `companion_bot/telegram_gateway.py` 的 `serialize_message_timestamp()` 中显式处理 naive `datetime`。
+- 当 `update.message.date.tzinfo is None` 或 `update.message.date.utcoffset() is None` 时，先 `replace(tzinfo=timezone.utc)`，再转成 UTC `ISO 8601` 字符串。
+- 在 `tests/test_telegram_gateway.py` 新增回归测试，验证 naive `datetime(2026, 6, 22, 6, 46)` 序列化结果固定为 `2026-06-22T06:46:00+00:00`，不受宿主机本地时区影响。
+
+## 测试命令和结果
+- 命令：` .venv/bin/python -m pytest tests/test_telegram_gateway.py -v `
+- 结果：`8 passed`
+
+## RED / GREEN 证据
+### RED
+- 先运行同一套测试，新增回归用例失败，失败点为：
+  - 期望：`2026-06-22T06:46:00+00:00`
+  - 实际：`2026-06-21T22:46:00+00:00`
+- 这证明旧实现会把 naive datetime 解释为本地时区。
+
+### GREEN
+- 修改 `serialize_message_timestamp()`，对 naive datetime 显式补 `timezone.utc`。
+- 重新运行测试后，`tests/test_telegram_gateway.py` 全部通过。
+
+## 变更文件
+- `companion_bot/telegram_gateway.py`
+- `tests/test_telegram_gateway.py`
+- `.superpowers/sdd/task-4-report.md`

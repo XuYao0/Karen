@@ -23,7 +23,10 @@ UNSUPPORTED_MESSAGE_REPLY = (
 def serialize_message_timestamp(update: Update) -> str | None:
     if update.message is None or update.message.date is None:
         return None
-    return update.message.date.astimezone(timezone.utc).isoformat()
+    message_date = update.message.date
+    if message_date.tzinfo is None or message_date.utcoffset() is None:
+        message_date = message_date.replace(tzinfo=timezone.utc)
+    return message_date.astimezone(timezone.utc).isoformat()
 
 
 async def fetch_chat_reply(
