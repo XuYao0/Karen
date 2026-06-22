@@ -1,4 +1,5 @@
 import logging
+from datetime import timezone
 from typing import Any
 
 import httpx
@@ -19,15 +20,33 @@ UNSUPPORTED_MESSAGE_REPLY = (
 )
 
 
-async def fetch_chat_reply(user_id: str, message_text: str, chat_service_url: str) -> str:
+def serialize_message_timestamp(update: Update) -> str | None:
+    if update.message is None or update.message.date is None:
+        return None
+    message_date = update.message.date
+    if message_date.tzinfo is None or message_date.utcoffset() is None:
+        message_date = message_date.replace(tzinfo=timezone.utc)
+    return message_date.astimezone(timezone.utc).isoformat()
+
+
+async def fetch_chat_reply(
+    user_id: str,
+    message_text: str,
+    chat_service_url: str,
+    message_timestamp: str | None = None,
+) -> str:
+    payload: dict[str, str] = {
+        "user_id": user_id,
+        "channel": "telegram",
+        "message_text": message_text,
+    }
+    if message_timestamp is not None:
+        payload["message_timestamp"] = message_timestamp
+
     async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as client:
         response = await client.post(
             f"{chat_service_url}/v1/chat/reply",
-            json={
-                "user_id": user_id,
-                "channel": "telegram",
-                "message_text": message_text,
-            },
+            json=payload,
         )
         response.raise_for_status()
         payload = response.json()
@@ -51,7 +70,12 @@ async def handle_text_message(
     message_text = update.message.text or ""
 
     try:
-        reply_text = await fetch_chat_reply(user_id, message_text, chat_service_url)
+        reply_text = await fetch_chat_reply(
+            user_id,
+            message_text,
+            chat_service_url,
+            message_timestamp=serialize_message_timestamp(update),
+        )
     except (httpx.HTTPError, KeyError, TypeError, ValueError):
         logger.warning("Failed to fetch chat reply for user_id=%s", user_id)
         reply_text = CHAT_FALLBACK_REPLY

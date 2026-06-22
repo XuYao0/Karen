@@ -1,33 +1,40 @@
-# Task 1 报告
+# Task 1 报告：LLM Configuration
 
 ## 实现内容
-- 新增 `pyproject.toml`，补齐项目元数据、运行依赖、测试依赖和 pytest 配置。
-- 新增 `README.md`，写入 task brief 指定的初始说明、启动方式和默认服务地址。
-- 新增 `companion_bot/__init__.py`、`companion_bot/http.py`、`companion_bot/config.py`，提供 `GatewaySettings`、`ChatSettings`、`load_gateway_settings()`、`load_chat_settings()`、`normalize_base_url()` 和 `DEFAULT_HTTP_TIMEOUT_SECONDS`。
-- 新增 `tests/test_config.py`，覆盖 token 必填、默认 URL、URL 归一化。
+- 在 `companion_bot/config.py` 中新增 `LLMSettings`。
+- 新增 `load_llm_settings() -> LLMSettings`。
+- 支持读取并校验以下配置：
+  - `LLM_PROVIDER`，默认 `deepseek`
+  - `DEEPSEEK_API_KEY`，必填
+  - `LLM_BASE_URL`，默认 `https://api.deepseek.com`
+  - `LLM_MODEL`，默认 `deepseek-v4-pro`
+  - `LLM_REASONING_EFFORT`，默认 `high`
+  - `LLM_THINKING_ENABLED`，支持布尔解析
+- `LLM_BASE_URL` 会通过 `normalize_base_url()` 去掉末尾斜杠。
+- 仅接受 `LLM_PROVIDER=deepseek`，否则抛出 `RuntimeError`。
 
 ## 测试命令和结果
-- `pytest tests/test_config.py -v`
-  - 结果：失败，原因是环境里没有全局 `pytest` 命令。
-- `uv run --extra dev pytest tests/test_config.py -v`
-  - 结果：4 passed。
+- 命令：`./.venv/bin/python -m pytest tests/test_config.py -v`
+- 结果：`16 passed`
 
 ## TDD Evidence
-- RED：临时移走 `companion_bot/` 后运行 `uv run --extra dev pytest tests/test_config.py -v`，收到了 `ModuleNotFoundError: No module named 'companion_bot'`，确认测试确实会因为缺少实现而失败。
-- GREEN：恢复实现后再次运行同一命令，4 个测试全部通过。
+- RED：
+  - 先追加 `tests/test_config.py` 中的 LLM 配置测试。
+  - 运行 `./.venv/bin/python -m pytest tests/test_config.py -v`
+  - 结果：导入失败，报错点为 `companion_bot.config` 中缺少 `LLMSettings`，符合预期的失败信号。
+- GREEN：
+  - 在 `companion_bot/config.py` 中补齐 `LLMSettings`、`load_llm_settings()` 和 `_parse_bool()`。
+  - 再次运行 `./.venv/bin/python -m pytest tests/test_config.py -v`
+  - 结果：全部通过。
 
 ## 变更文件
-- `pyproject.toml`
-- `README.md`
-- `companion_bot/__init__.py`
 - `companion_bot/config.py`
-- `companion_bot/http.py`
 - `tests/test_config.py`
 
 ## 自查结论
-- 只实现了 Task 1 要求的 scaffold、配置读取和基础测试，没有实现后续 memory/chat/telegram gateway 功能。
-- 运行结果干净，聚焦测试通过。
-- `uv` 生成的临时产物已清理，不保留额外提交噪声。
+- 变更仅限 Task 1 的配置读取，不包含 LLM client、chat-service 调用或 Telegram timestamp 相关实现。
+- 测试覆盖了必填项、默认值、URL 归一化、provider 校验和布尔解析。
+- 本次运行的聚焦测试全部通过。
 
 ## 疑虑
-- `README.md` 中引用的后续服务入口目前还没有实现，这是按 brief 保留的预告性内容，不影响 Task 1 验收。
+- 无

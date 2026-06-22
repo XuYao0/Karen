@@ -1,4 +1,8 @@
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import json
+import os
+import time
 
 import httpx
 import pytest
@@ -11,6 +15,7 @@ from companion_bot.telegram_gateway import (
     handle_start,
     handle_text_message,
     handle_unsupported_message,
+    serialize_message_timestamp,
 )
 
 
@@ -22,6 +27,7 @@ class FakeUser:
 @dataclass
 class FakeMessage:
     text: str | None = None
+    date: datetime | None = None
     replies: list[str] = field(default_factory=list)
 
     async def reply_text(self, text: str) -> None:
@@ -42,7 +48,7 @@ class FakeBotDataContext:
 @respx.mock
 @pytest.mark.asyncio
 async def test_fetch_chat_reply_calls_chat_service():
-    respx.post("http://chat.test/v1/chat/reply").mock(
+    route = respx.post("http://chat.test/v1/chat/reply").mock(
         return_value=httpx.Response(200, json={"reply_text": "warm reply"})
     )
 
@@ -53,6 +59,11 @@ async def test_fetch_chat_reply_calls_chat_service():
     )
 
     assert reply == "warm reply"
+    assert json.loads(route.calls.last.request.content) == {
+        "user_id": "telegram:123",
+        "channel": "telegram",
+        "message_text": "hello",
+    }
 
 
 @pytest.mark.asyncio
@@ -82,6 +93,50 @@ async def test_handle_text_message_forwards_to_chat_service():
     await handle_text_message(update, context)
 
     assert update.message.replies == ["I'm listening."]
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_handle_text_message_forwards_utc_message_timestamp():
+    route = respx.post("http://chat.test/v1/chat/reply").mock(
+        return_value=httpx.Response(200, json={"reply_text": "I'm listening."})
+    )
+    update = FakeUpdate(
+        effective_user=FakeUser(id=123),
+        message=FakeMessage(
+            text="你好",
+            date=datetime(2026, 6, 22, 6, 46, tzinfo=timezone.utc),
+        ),
+    )
+    context = FakeBotDataContext(bot_data={"chat_service_url": "http://chat.test"})
+
+    await handle_text_message(update, context)
+
+    assert json.loads(route.calls.last.request.content)["message_timestamp"] == (
+        "2026-06-22T06:46:00+00:00"
+    )
+
+
+def test_serialize_message_timestamp_treats_naive_datetime_as_utc(monkeypatch):
+    original_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    if hasattr(time, "tzset"):
+        time.tzset()
+
+    try:
+        update = FakeUpdate(
+            effective_user=FakeUser(id=123),
+            message=FakeMessage(date=datetime(2026, 6, 22, 6, 46)),
+        )
+
+        assert serialize_message_timestamp(update) == "2026-06-22T06:46:00+00:00"
+    finally:
+        if original_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", original_tz)
+        if hasattr(time, "tzset"):
+            time.tzset()
 
 
 @respx.mock
