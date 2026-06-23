@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -50,19 +51,37 @@ class AgentMemory:
     people: dict[str, PersonState] = field(default_factory=dict)
     current_events: list[EventMemory] = field(default_factory=list)
     compressed_events: list[EventMemory] = field(default_factory=list)
+    observed_turns: list[ConversationTurn] = field(default_factory=list, repr=False)
     max_current_events: int = 8
     max_recent_events_per_person: int = 8
 
     def retrieve_context(self, turn: ConversationTurn) -> dict[str, Any]:
-        speaker_state = self.people.get("user")
-        return {
-            "speaker_state": speaker_state.compact() if speaker_state else None,
-            "recent_current_events": [event.to_dict() for event in self.current_events[-5:]],
-            "compressed_events": [event.to_dict() for event in self.compressed_events[-5:]],
-            "known_characters": sorted(self.people.keys()),
-        }
+        boundary = _parse_iso_timestamp(turn.message_timestamp)
+        if boundary is None:
+            return self._context_snapshot()
 
-    def update(self, turn: ConversationTurn) -> dict[str, Any]:
+        visible_memory = AgentMemory(
+            max_current_events=self.max_current_events,
+            max_recent_events_per_person=self.max_recent_events_per_person,
+        )
+        visible_turns = sorted(
+            (
+                (event_time, index, observed_turn)
+                for index, observed_turn in enumerate(self.observed_turns)
+                for event_time in [_parse_iso_timestamp(observed_turn.message_timestamp)]
+                if event_time is not None and event_time < boundary
+            ),
+            key=lambda item: (item[0], item[1]),
+        )
+        for _, _, observed_turn in visible_turns:
+            visible_memory.update(observed_turn, record_observation=False)
+        return visible_memory._context_snapshot()
+
+    def update(
+        self, turn: ConversationTurn, *, record_observation: bool = True
+    ) -> dict[str, Any]:
+        if record_observation:
+            self.observed_turns.append(turn)
         person = self.people.setdefault("user", PersonState(name="user"))
         event = EventMemory(
             time=_format_time(turn),
@@ -91,6 +110,15 @@ class AgentMemory:
             "compressed_events": [event.to_dict() for event in self.compressed_events],
         }
 
+    def _context_snapshot(self) -> dict[str, Any]:
+        speaker_state = self.people.get("user")
+        return {
+            "speaker_state": speaker_state.compact() if speaker_state else None,
+            "recent_current_events": [event.to_dict() for event in self.current_events[-5:]],
+            "compressed_events": [event.to_dict() for event in self.compressed_events[-5:]],
+            "known_characters": sorted(self.people.keys()),
+        }
+
     def _compress_if_needed(self) -> list[EventMemory]:
         if len(self.current_events) <= self.max_current_events:
             return []
@@ -116,6 +144,20 @@ class AgentMemory:
 
 def _format_time(turn: ConversationTurn) -> str:
     return turn.message_timestamp or "current"
+
+
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _characters_for(turn: ConversationTurn) -> list[str]:

@@ -119,3 +119,33 @@ def test_memory_turn_endpoint_updates_online_memory():
     assert context_response.json()["context"]["speaker_state"]["recent_events"] == [
         "2026-06-22T09:22:00+00:00 via telegram: user said: 有点饿了 | Karen replied: 要不要先吃点简单的？"
     ]
+
+
+def test_memory_context_endpoint_filters_future_turns_for_earlier_timestamp():
+    with TestClient(app) as client:
+        update_response = client.post(
+            "/v1/users/telegram:123/memory/turns",
+            json={
+                "channel": "telegram",
+                "message_text": "晚上一起吃饭",
+                "message_timestamp": "2026-06-22T10:05:00+00:00",
+                "assistant_reply": "好，我记住了。",
+            },
+        )
+        context_response = client.post(
+            "/v1/users/telegram:123/memory/context",
+            json={
+                "channel": "telegram",
+                "message_text": "早上在忙什么",
+                "message_timestamp": "2026-06-22T09:00:00+00:00",
+            },
+        )
+
+    assert update_response.status_code == 200
+    assert context_response.status_code == 200
+    assert context_response.json()["context"] == {
+        "speaker_state": None,
+        "recent_current_events": [],
+        "compressed_events": [],
+        "known_characters": [],
+    }

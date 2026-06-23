@@ -76,6 +76,64 @@ def test_retrieve_context_after_update_returns_compact_state():
     )
 
 
+def test_retrieve_context_excludes_future_turns_for_earlier_timestamp():
+    memory = AgentMemory()
+    memory.update(
+        ConversationTurn(
+            user_id="telegram:123",
+            channel="telegram",
+            message_text="晚上一起吃饭",
+            message_timestamp="2026-06-22T10:05:00+00:00",
+            assistant_reply="好，我记住了。",
+        )
+    )
+
+    context = memory.retrieve_context(
+        ConversationTurn(
+            user_id="telegram:123",
+            channel="telegram",
+            message_text="早上在忙什么",
+            message_timestamp="2026-06-22T09:00:00+00:00",
+        )
+    )
+
+    assert context == {
+        "speaker_state": None,
+        "recent_current_events": [],
+        "compressed_events": [],
+        "known_characters": [],
+    }
+
+
+def test_retrieve_context_with_invalid_timestamp_keeps_online_semantics():
+    memory = AgentMemory()
+    memory.update(
+        ConversationTurn(
+            user_id="telegram:123",
+            channel="telegram",
+            message_text="今天有点累",
+            message_timestamp="2026-06-22T10:00:00+00:00",
+            assistant_reply="那我们慢一点。",
+        )
+    )
+
+    context = memory.retrieve_context(
+        ConversationTurn(
+            user_id="telegram:123",
+            channel="telegram",
+            message_text="继续聊",
+            message_timestamp="not-a-timestamp",
+        )
+    )
+
+    assert context["speaker_state"]["recent_events"] == [
+        "2026-06-22T10:00:00+00:00 via telegram: user said: 今天有点累 | Karen replied: 那我们慢一点。"
+    ]
+    assert context["recent_current_events"][-1]["action"] == (
+        'user said "今天有点累". Karen replied "那我们慢一点。".'
+    )
+
+
 def test_current_events_are_compressed_after_limit():
     memory = AgentMemory(max_current_events=2)
 
