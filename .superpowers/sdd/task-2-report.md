@@ -1,31 +1,48 @@
-# Task 2: DeepSeek LLM Client 报告
+# Task 2: Memory Service REST APIs 报告
+
+## 实现方案
+- 范围只限 `companion_bot/services/memory.py` 与 `tests/test_memory_service.py`，外加本报告；不改 chat service、README 或计划文档。
+- 保持现有内存存储方式不变：继续保留 `_memory_store` 的 `/memories` GET/POST 兼容行为，同时新增基于 `AgentMemory` 的 `_agent_memories` 在线上下文存储。
+- 新增两个 REST API：
+  - `POST /v1/users/{user_id}/memory/context`：基于最新用户消息之前已观察到的信息返回上下文。
+  - `POST /v1/users/{user_id}/memory/turns`：写入一轮对话，并返回 memory update。
+- 启动生命周期同时清空 `_memory_store` 与 `_agent_memories`，保证测试隔离和现有服务行为一致。
+- 按 brief 执行 TDD：
+  1. 先补测试，覆盖新接口与 startup 清理在线记忆。
+  2. 跑 brief 指定 pytest，拿到 RED。
+  3. 在 `memory.py` 做最小实现使测试转 GREEN。
+  4. 再跑同一条 pytest 验证全部通过。
 
 ## 实现内容
-- 新增 `companion_bot/llm.py`，提供 `ChatMessage`、`LLMClientError` 和 `generate_chat_reply(messages, settings) -> str`。
-- 客户端按 DeepSeek/OpenAI-compatible 方式发送 `POST /chat/completions`，使用 `LLMSettings` 和 `DEFAULT_HTTP_TIMEOUT_SECONDS`。
-- 请求体包含 `model`、`messages`、`reasoning_effort`、`stream=False`，并在 `thinking_enabled=True` 时附加 `thinking: {"type": "enabled"}`。
-- 处理 HTTP 错误、非 2xx 响应和非法响应结构，统一抛出 `LLMClientError`。
-- 新增 `tests/test_llm.py` 覆盖：请求体、thinking 开关、HTTP 错误、非法响应结构。
+- 在 `companion_bot/services/memory.py` 中引入 `AgentMemory` 和 `ConversationTurn`，新增 `_agent_memories` 作为在线会话记忆的进程内存储。
+- 新增 `MemoryContextRequest/Response` 与 `ConversationTurnRequest/Response`，分别承接上下文查询与对话轮次写入。
+- 新增 `POST /v1/users/{user_id}/memory/context`，通过 `AgentMemory.retrieve_context(...)` 返回最新用户消息之前的可观察上下文。
+- 新增 `POST /v1/users/{user_id}/memory/turns`，通过 `AgentMemory.update(...)` 写入一轮对话并返回更新结果。
+- `lifespan` 启动时同时清空 `_memory_store` 与 `_agent_memories`，保留现有内存模型并保证测试启动隔离。
+- 现有 `GET/POST /v1/users/{user_id}/memories` 保持不变。
 
-## 测试命令和结果
-- RED: `.venv/bin/python -m pytest tests/test_llm.py -v`
-  - 结果：失败，原因是 `ModuleNotFoundError: No module named 'companion_bot.llm'`。
-- GREEN: `.venv/bin/python -m pytest tests/test_llm.py -v`
-  - 结果：`4 passed in 0.07s`。
+## 测试命令与结果
+- RED:
+  - 命令：`/home/xuyao/karen/.worktrees/deepseek-llm-connectivity/.venv/bin/python -m pytest tests/test_memory_service.py -v`
+  - 结果：失败，`ImportError: cannot import name '_agent_memories' from 'companion_bot.services.memory'`。
+- GREEN:
+  - 命令：`/home/xuyao/karen/.worktrees/deepseek-llm-connectivity/.venv/bin/python -m pytest tests/test_memory_service.py -v`
+  - 结果：`5 passed, 1 warning in 0.24s`。
 
-## TDD Evidence
-- RED 证据：在实现 `companion_bot/llm.py` 前，测试收集阶段直接失败，证明测试确实覆盖到了缺失的生产代码。
-- GREEN 证据：实现后同一组焦点测试全部通过，且断言覆盖了请求 payload、header、成功响应和异常路径。
+## TDD RED/GREEN 证据
+- RED 证据：先按 brief 增加测试后，pytest 在收集阶段因 `_agent_memories` 缺失而失败，说明新增测试确实覆盖到了未实现接口所需的生产代码。
+- GREEN 证据：补充最小实现后，同一条 pytest 命令全部通过，证明新接口与 startup 清理行为满足测试要求。
 
-## 变更文件
-- `companion_bot/llm.py`
-- `tests/test_llm.py`
+## 修改文件
+- `companion_bot/services/memory.py`
+- `tests/test_memory_service.py`
+- `.superpowers/sdd/task-2-report.md`
 
-## 自查结论
-- 只实现了 Task 2 需要的 DeepSeek client，没有修改 chat service、telegram gateway 或 README。
-- 请求构造与 brief 保持一致，错误处理边界清晰，测试通过。
-- 测试里对请求体使用了 `json.loads(request.content)`，因为当前 `httpx 0.28.1` 的 `Request` 对象没有 `.json()` 方法。
-- 代码提交：`70a969c` `feat: add deepseek llm client`
+## 自审发现
+- 只改了 brief 允许的 service 与 test 文件，未触碰 chat service、README 或计划文档。
+- 新增在线上下文接口只使用进程内 `defaultdict(AgentMemory)`，没有引入数据库或持久化。
+- `/memory/context` 仅调用 `retrieve_context`，不会把当前请求的用户消息写入记忆，因此上下文只包含最新用户消息之前的已观察信息。
+- 未增加任何 provider/API key 日志输出。
 
 ## 疑虑
 - 无。
