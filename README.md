@@ -56,19 +56,37 @@ curl -X POST http://127.0.0.1:8002/v1/chat/reply \
   -d '{"user_id":"telegram:123","channel":"telegram","message_text":"I had a hard day.","message_timestamp":"2026-06-22T06:46:00+00:00"}'
 ```
 
-Read memories:
+Read legacy flat memories:
 
 ```bash
 curl http://127.0.0.1:8001/v1/users/telegram:123/memories
 ```
 
-Store memory:
+Store legacy flat memory:
 
 ```bash
 curl -X POST http://127.0.0.1:8001/v1/users/telegram:123/memories \
   -H 'Content-Type: application/json' \
   -d '{"kind":"interaction_note","content":"User sent a message through a chat channel.","source":"chat-service"}'
 ```
+
+Read conversation memory context:
+
+```bash
+curl -X POST http://127.0.0.1:8001/v1/users/telegram:123/memory/context \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"telegram","message_text":"你好","message_timestamp":"2026-06-22T06:46:00+00:00"}'
+```
+
+Store a completed conversation turn:
+
+```bash
+curl -X POST http://127.0.0.1:8001/v1/users/telegram:123/memory/turns \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"telegram","message_text":"有点饿了","message_timestamp":"2026-06-22T09:22:00+00:00","assistant_reply":"要不要先吃点简单的？"}'
+```
+
+Memory is currently process-local and resets when `memory-service` restarts.
 
 ## LLM Smoke Test
 
