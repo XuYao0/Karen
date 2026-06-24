@@ -1,4 +1,6 @@
 import logging
+import json
+from typing import Any
 
 import httpx
 from fastapi import FastAPI
@@ -31,66 +33,97 @@ class ChatReplyResponse(BaseModel):
     reply_text: str
 
 
-class MemoryRecord(BaseModel):
-    kind: str
-    content: str
-    source: str
-
-
-class MemoriesResponse(BaseModel):
+class MemoryContextResponse(BaseModel):
     user_id: str
-    memories: list[MemoryRecord]
+    context: dict[str, Any]
+
+
+class ConversationTurnResponse(BaseModel):
+    updated: bool
+    memory_update: dict[str, Any]
 
 
 app = FastAPI(title="companion-chat-service")
 
 
-async def fetch_memories(user_id: str, memory_service_url: str) -> list[MemoryRecord]:
-    try:
-        async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as client:
-            response = await client.get(
-                f"{memory_service_url}/v1/users/{user_id}/memories"
-            )
-            response.raise_for_status()
-    except httpx.HTTPError:
-        logger.exception("Failed to fetch memories for user_id=%s", user_id)
-        return []
-
-    try:
-        return MemoriesResponse.model_validate(response.json()).memories
-    except (ValueError, TypeError):
-        logger.exception("Invalid memory payload for user_id=%s", user_id)
-        return []
-
-
-async def store_interaction_note(user_id: str, memory_service_url: str) -> None:
+async def fetch_memory_context(
+    request: ChatReplyRequest, memory_service_url: str
+) -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as client:
             response = await client.post(
-                f"{memory_service_url}/v1/users/{user_id}/memories",
+                f"{memory_service_url}/v1/users/{request.user_id}/memory/context",
                 json={
-                    "kind": "interaction_note",
-                    "content": "User sent a message through a chat channel.",
-                    "source": "chat-service",
+                    "channel": request.channel,
+                    "message_text": request.message_text,
+                    "message_timestamp": request.message_timestamp,
                 },
             )
             response.raise_for_status()
     except httpx.HTTPError:
-        logger.exception("Failed to store interaction note for user_id=%s", user_id)
+        logger.exception("Failed to fetch memory context for user_id=%s", request.user_id)
+        return {}
+
+    try:
+        return MemoryContextResponse.model_validate(response.json()).context
+    except (ValueError, TypeError):
+        logger.exception("Invalid memory context payload for user_id=%s", request.user_id)
+        return {}
 
 
-async def build_reply(request: ChatReplyRequest) -> str:
+def format_memory_context_message(context: dict[str, Any]) -> ChatMessage | None:
+    if not _has_memory_context(context):
+        return None
+    content = (
+        "Known memory context before the latest user message:\n"
+        f"{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}\n"
+        "Use it only as background. Do not claim certainty beyond it."
+    )
+    return ChatMessage(role="system", content=content)
+
+
+def _has_memory_context(context: dict[str, Any]) -> bool:
+    return bool(
+        context.get("speaker_state")
+        or context.get("recent_current_events")
+        or context.get("compressed_events")
+        or context.get("known_characters")
+    )
+
+
+async def store_conversation_turn(
+    request: ChatReplyRequest, reply_text: str, memory_service_url: str
+) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                f"{memory_service_url}/v1/users/{request.user_id}/memory/turns",
+                json={
+                    "channel": request.channel,
+                    "message_text": request.message_text,
+                    "message_timestamp": request.message_timestamp,
+                    "assistant_reply": reply_text,
+                },
+            )
+            response.raise_for_status()
+    except httpx.HTTPError:
+        logger.exception("Failed to store conversation turn for user_id=%s", request.user_id)
+
+
+async def build_reply(request: ChatReplyRequest, memory_context: dict[str, Any]) -> str:
     provider = "unknown"
     model = "unknown"
     try:
         settings = load_llm_settings()
         provider = settings.provider
         model = settings.model
+        messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)]
+        memory_message = format_memory_context_message(memory_context)
+        if memory_message is not None:
+            messages.append(memory_message)
+        messages.append(ChatMessage(role="user", content=request.message_text))
         return await generate_chat_reply(
-            messages=[
-                ChatMessage(role="system", content=SYSTEM_PROMPT),
-                ChatMessage(role="user", content=request.message_text),
-            ],
+            messages=messages,
             settings=settings,
         )
     except (RuntimeError, LLMClientError) as exc:
@@ -109,9 +142,9 @@ async def build_reply(request: ChatReplyRequest) -> str:
 @app.post("/v1/chat/reply", response_model=ChatReplyResponse)
 async def reply(request: ChatReplyRequest) -> ChatReplyResponse:
     settings = load_chat_settings()
-    await fetch_memories(request.user_id, settings.memory_service_url)
-    reply_text = await build_reply(request)
-    await store_interaction_note(request.user_id, settings.memory_service_url)
+    memory_context = await fetch_memory_context(request, settings.memory_service_url)
+    reply_text = await build_reply(request, memory_context)
+    await store_conversation_turn(request, reply_text, settings.memory_service_url)
     return ChatReplyResponse(reply_text=reply_text)
 
 

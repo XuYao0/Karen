@@ -8,6 +8,39 @@ from fastapi.testclient import TestClient
 from companion_bot.services.chat import app
 
 
+EMPTY_CONTEXT_PAYLOAD = {
+    "user_id": "telegram:123",
+    "context": {
+        "speaker_state": None,
+        "recent_current_events": [],
+        "compressed_events": [],
+        "known_characters": [],
+    },
+}
+
+NON_EMPTY_CONTEXT_PAYLOAD = {
+    "user_id": "telegram:123",
+    "context": {
+        "speaker_state": {
+            "name": "user",
+            "goals": [],
+            "needs": [],
+            "concerns": [],
+            "recent_events": [
+                "2026-06-22T09:22:00+00:00 via telegram: user said: 有点饿了 | Karen replied: 要不要先吃点简单的？"
+            ],
+            "behavior_patterns": [],
+            "interpretation_patterns": [],
+            "traits_or_notes": [],
+            "relationships": {},
+        },
+        "recent_current_events": [],
+        "compressed_events": [],
+        "known_characters": ["user"],
+    },
+}
+
+
 @pytest.fixture(autouse=True)
 def clear_llm_env(monkeypatch):
     for key in (
@@ -25,25 +58,15 @@ def clear_llm_env(monkeypatch):
 def test_chat_reply_uses_deepseek_latest_message_only(monkeypatch):
     monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
-    respx.get("http://memory.test/v1/users/telegram:123/memories").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "user_id": "telegram:123",
-                "memories": [
-                    {
-                        "kind": "preference",
-                        "content": "This must not be sent to the LLM yet.",
-                        "source": "test",
-                    }
-                ],
-            },
-        )
+    respx.post("http://memory.test/v1/users/telegram:123/memory/context").mock(
+        return_value=httpx.Response(200, json=NON_EMPTY_CONTEXT_PAYLOAD)
     )
-    post_route = respx.post("http://memory.test/v1/users/telegram:123/memories").mock(
-        return_value=httpx.Response(200, json={"stored": True})
+    turn_route = respx.post(
+        "http://memory.test/v1/users/telegram:123/memory/turns"
+    ).mock(
+        return_value=httpx.Response(200, json={"updated": True, "memory_update": {}})
     )
-    deepseek_route = respx.post("https://api.deepseek.com/chat/completions").mock(
+    llm_route = respx.post("https://api.deepseek.com/chat/completions").mock(
         return_value=httpx.Response(
             200,
             json={"choices": [{"message": {"content": "你好，我听见你了。"}}]},
@@ -63,21 +86,54 @@ def test_chat_reply_uses_deepseek_latest_message_only(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"reply_text": "你好，我听见你了。"}
-    assert post_route.called
-    assert json.loads(post_route.calls[0].request.content) == {
-        "kind": "interaction_note",
-        "content": "User sent a message through a chat channel.",
-        "source": "chat-service",
+    assert turn_route.called
+    assert json.loads(turn_route.calls[0].request.content) == {
+        "channel": "telegram",
+        "message_text": "你好",
+        "message_timestamp": "2026-06-22T06:46:00+00:00",
+        "assistant_reply": "你好，我听见你了。",
     }
-    request_body = json.loads(deepseek_route.calls.last.request.content)
-    assert request_body["messages"] == [
-        {
-            "role": "system",
-            "content": "You are Karen, a warm and emotionally present AI friend. Reply naturally and briefly.",
-        },
-        {"role": "user", "content": "你好"},
+    llm_body = json.loads(llm_route.calls[0].request.content)
+    assert [message["role"] for message in llm_body["messages"]] == [
+        "system",
+        "system",
+        "user",
     ]
-    assert "This must not be sent to the LLM yet." not in str(request_body)
+    assert "Known memory context before the latest user message:" in llm_body["messages"][1]["content"]
+    assert "有点饿了" in llm_body["messages"][1]["content"]
+
+
+@respx.mock
+def test_chat_reply_omits_memory_message_when_context_is_empty(monkeypatch):
+    monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    respx.post("http://memory.test/v1/users/telegram:123/memory/context").mock(
+        return_value=httpx.Response(200, json=EMPTY_CONTEXT_PAYLOAD)
+    )
+    respx.post("http://memory.test/v1/users/telegram:123/memory/turns").mock(
+        return_value=httpx.Response(200, json={"updated": True, "memory_update": {}})
+    )
+    llm_route = respx.post("https://api.deepseek.com/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "我在。"}}]},
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/reply",
+            json={
+                "user_id": "telegram:123",
+                "channel": "telegram",
+                "message_text": "你好",
+                "message_timestamp": "2026-06-22T06:46:00+00:00",
+            },
+        )
+
+    assert response.status_code == 200
+    llm_body = json.loads(llm_route.calls[0].request.content)
+    assert [message["role"] for message in llm_body["messages"]] == ["system", "user"]
 
 
 @respx.mock
@@ -86,11 +142,11 @@ def test_chat_reply_logs_provider_model_and_error_type_on_llm_failure(
 ):
     monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
-    respx.get("http://memory.test/v1/users/telegram:123/memories").mock(
-        return_value=httpx.Response(200, json={"user_id": "telegram:123", "memories": []})
+    respx.post("http://memory.test/v1/users/telegram:123/memory/context").mock(
+        return_value=httpx.Response(200, json=EMPTY_CONTEXT_PAYLOAD)
     )
-    respx.post("http://memory.test/v1/users/telegram:123/memories").mock(
-        return_value=httpx.Response(200, json={"stored": True})
+    respx.post("http://memory.test/v1/users/telegram:123/memory/turns").mock(
+        return_value=httpx.Response(200, json={"updated": True, "memory_update": {}})
     )
     respx.post("https://api.deepseek.com/chat/completions").mock(
         return_value=httpx.Response(503, json={"detail": "unavailable"})
@@ -127,11 +183,11 @@ def test_chat_reply_logs_unknown_provider_and_model_on_settings_failure(
     monkeypatch, caplog
 ):
     monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
-    respx.get("http://memory.test/v1/users/telegram:123/memories").mock(
-        return_value=httpx.Response(200, json={"user_id": "telegram:123", "memories": []})
+    respx.post("http://memory.test/v1/users/telegram:123/memory/context").mock(
+        return_value=httpx.Response(200, json=EMPTY_CONTEXT_PAYLOAD)
     )
-    respx.post("http://memory.test/v1/users/telegram:123/memories").mock(
-        return_value=httpx.Response(200, json={"stored": True})
+    respx.post("http://memory.test/v1/users/telegram:123/memory/turns").mock(
+        return_value=httpx.Response(200, json={"updated": True, "memory_update": {}})
     )
 
     caplog.clear()
@@ -163,10 +219,10 @@ def test_chat_reply_logs_unknown_provider_and_model_on_settings_failure(
 def test_chat_reply_continues_when_memory_service_fails(monkeypatch):
     monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
-    respx.get("http://memory.test/v1/users/telegram:123/memories").mock(
+    respx.post("http://memory.test/v1/users/telegram:123/memory/context").mock(
         return_value=httpx.Response(503, json={"detail": "unavailable"})
     )
-    respx.post("http://memory.test/v1/users/telegram:123/memories").mock(
+    respx.post("http://memory.test/v1/users/telegram:123/memory/turns").mock(
         return_value=httpx.Response(503, json={"detail": "unavailable"})
     )
     respx.post("https://api.deepseek.com/chat/completions").mock(
