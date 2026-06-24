@@ -5,7 +5,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from companion_bot.services.chat import app
+from companion_bot.services.chat import LLM_FALLBACK_REPLY, app
 
 
 EMPTY_CONTEXT_PAYLOAD = {
@@ -55,10 +55,12 @@ def clear_llm_env(monkeypatch):
 
 
 @respx.mock
-def test_chat_reply_uses_deepseek_latest_message_only(monkeypatch):
+def test_chat_reply_includes_memory_context_and_persists_turn(monkeypatch):
     monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
-    respx.post("http://memory.test/v1/users/telegram:123/memory/context").mock(
+    context_route = respx.post(
+        "http://memory.test/v1/users/telegram:123/memory/context"
+    ).mock(
         return_value=httpx.Response(200, json=NON_EMPTY_CONTEXT_PAYLOAD)
     )
     turn_route = respx.post(
@@ -86,6 +88,12 @@ def test_chat_reply_uses_deepseek_latest_message_only(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"reply_text": "你好，我听见你了。"}
+    assert context_route.called
+    assert json.loads(context_route.calls[0].request.content) == {
+        "channel": "telegram",
+        "message_text": "你好",
+        "message_timestamp": "2026-06-22T06:46:00+00:00",
+    }
     assert turn_route.called
     assert json.loads(turn_route.calls[0].request.content) == {
         "channel": "telegram",
@@ -145,7 +153,9 @@ def test_chat_reply_logs_provider_model_and_error_type_on_llm_failure(
     respx.post("http://memory.test/v1/users/telegram:123/memory/context").mock(
         return_value=httpx.Response(200, json=EMPTY_CONTEXT_PAYLOAD)
     )
-    respx.post("http://memory.test/v1/users/telegram:123/memory/turns").mock(
+    turn_route = respx.post(
+        "http://memory.test/v1/users/telegram:123/memory/turns"
+    ).mock(
         return_value=httpx.Response(200, json={"updated": True, "memory_update": {}})
     )
     respx.post("https://api.deepseek.com/chat/completions").mock(
@@ -165,8 +175,13 @@ def test_chat_reply_logs_provider_model_and_error_type_on_llm_failure(
         )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "reply_text": "我在认真想怎么回应你，但刚刚有点卡住了。你可以再发我一次，我会继续陪你。"
+    assert response.json() == {"reply_text": LLM_FALLBACK_REPLY}
+    assert turn_route.called
+    assert json.loads(turn_route.calls[0].request.content) == {
+        "channel": "telegram",
+        "message_text": "你好",
+        "message_timestamp": "2026-06-22T06:46:00+00:00",
+        "assistant_reply": LLM_FALLBACK_REPLY,
     }
     log_text = caplog.text
     assert "Failed to generate LLM reply" in log_text

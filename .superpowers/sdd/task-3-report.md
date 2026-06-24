@@ -1,52 +1,107 @@
-# Task 3: Chat Service Report
+# Task 3 Report
 
-## 实现计划
-- 在 `companion_bot/services/chat.py` 中把本地占位回复改为 LLM 调用链，使用 `load_llm_settings()` 与 `generate_chat_reply(...)`。
-- `POST /v1/chat/reply` 继续读取 memory 并写入 interaction note，但本任务明确不把 memory 或历史消息发给 LLM，只发送 system prompt 与最新用户消息。
-- `ChatReplyRequest` 补充 `message_timestamp: str | None`，对外兼容 Task 4 的时间透传接口。
-- LLM 失败时返回固定中文 fallback：`我在认真想怎么回应你，但刚刚有点卡住了。你可以再发我一次，我会继续陪你。`
-- 测试只覆盖 brief 要求的三条路径：最新消息直连 LLM、LLM 失败 fallback、memory 服务失败不阻断 LLM 成功。
+## 方案
 
-## 测试计划
-- 先改 `tests/test_chat_service.py`，再运行 `.venv/bin/python -m pytest tests/test_chat_service.py -v` 获取 RED。
-- 实现后运行 `.venv/bin/python -m pytest tests/test_chat_service.py tests/test_llm.py -v` 获取 GREEN。
-- 若 `.venv/bin/python` 不可用，再退回 `uv run --extra dev pytest ...`。
+- 目标：让 chat service 在生成回复前读取 memory-service 的 conversation context，并在生成回复后写入最新 user turn + assistant reply。
+- 范围：只修改 `companion_bot/services/chat.py` 和 `tests/test_chat_service.py`。
+- 约束：
+  - 保持现有内存存储行为，不引入数据库。
+  - 不修改 memory domain、memory service、README、计划文档。
+  - 保持 `/v1/users/{user_id}/memories` GET/POST 兼容性不受本任务影响。
+  - memory context 只允许包含 latest user message 之前已观察到的信息。
+  - memory-service 失败时 chat-service 仍必须返回 reply。
+  - 不记录 API key 或完整 provider secret。
+- TDD 计划：
+  1. 先按 brief 改 `tests/test_chat_service.py`，让测试改为 mock `/memory/context` 与 `/memory/turns`，新增 empty-context 场景，并更新 memory-failure 断言。
+  2. 运行 brief 指定 pytest 命令，记录 RED 证据。
+  3. 在 `companion_bot/services/chat.py` 以最小改动替换旧 memories 拉取/写入逻辑，插入 memory system message。
+  4. 再跑同一 pytest 命令拿到 GREEN，整理自审、提交、补全报告。
 
-## TDD Evidence
-- RED: `./.venv/bin/python -m pytest tests/test_chat_service.py -v`，3 个测试全部失败；失败点分别是 chat service 仍返回本地英文 placeholder，而不是 DeepSeek 回复、中文 fallback、以及 memory 失败下的 LLM 成功回复。
-- GREEN: `./.venv/bin/python -m pytest tests/test_chat_service.py tests/test_llm.py -v`，`7 passed, 1 warning`。
-- 相关回归: 本任务按 brief 额外运行了 `tests/test_llm.py`，确认 chat-service 接线没有破坏现有 LLM client 行为。
+## 实现内容
 
-## 变更文件
+- `companion_bot/services/chat.py`
+  - 移除旧的 `MemoryRecord` / `MemoriesResponse`、`fetch_memories`、`store_interaction_note`。
+  - 新增 `MemoryContextResponse`、`ConversationTurnResponse`、`fetch_memory_context(...)`、`store_conversation_turn(...)`。
+  - 新增 `_has_memory_context(...)` 与 `format_memory_context_message(...)`，仅在 context 非空时插入第二条 `system` message。
+  - `build_reply(...)` 改为接收 `memory_context`，消息顺序变为 `system` -> `optional memory system` -> `user`。
+  - `reply(...)` 改为先取 context，再生成 reply，最后写入 `/memory/turns`；memory-service 失败时仅记日志，不阻断回复。
+- `tests/test_chat_service.py`
+  - 增加 `EMPTY_CONTEXT_PAYLOAD`、`NON_EMPTY_CONTEXT_PAYLOAD`。
+  - 更新成功路径测试，改为 mock `/memory/context` 与 `/memory/turns`，并断言 LLM 请求体包含 memory system message 与 turn 存储载荷。
+  - 新增 empty context 场景，断言不会多发 memory system message。
+  - 更新 LLM 失败、settings 失败、memory-service 失败场景到新接口。
+
+## 测试命令与结果
+
+- RED
+  - 命令：`/home/xuyao/karen/.worktrees/deepseek-llm-connectivity/.venv/bin/python -m pytest tests/test_chat_service.py -v`
+  - 结果：`5 failed, 1 warning`
+- GREEN
+  - 命令：`/home/xuyao/karen/.worktrees/deepseek-llm-connectivity/.venv/bin/python -m pytest tests/test_chat_service.py -v`
+  - 结果：`5 passed, 1 warning`
+
+## TDD RED/GREEN 证据
+
+- RED 证据：
+  - 失败栈显示 `companion_bot/services/chat.py:reply()` 仍调用 `fetch_memories(...)`。
+  - `respx` 报错为 `RESPX: <Request('GET', 'http://memory.test/v1/users/telegram:123/memories')> not mocked!`。
+  - 这与 brief 预期一致，说明失败原因是实现仍依赖旧 `/memories` 接口。
+- GREEN 证据：
+  - 同一条 pytest 命令在实现后变为 `5 passed`。
+  - 新增 empty-context 场景通过，说明 context 为空时不会把第二条 system message 发送给 LLM。
+  - memory-service 503 场景通过，说明上下文读取/turn 写入失败不会阻断 chat reply。
+
+## 修改文件
+
 - `.superpowers/sdd/task-3-report.md`
 - `companion_bot/services/chat.py`
 - `tests/test_chat_service.py`
 
-## 自查结论
-- 已严格按 brief 接入 `load_llm_settings()`、`ChatMessage`、`LLMClientError`、`generate_chat_reply(...)`，没有改 Telegram gateway、README 或 LLM client。
-- chat-service 发给 LLM 的消息只包含固定 system prompt 和最新 `message_text`，没有发送 memory 内容，也没有引入历史消息。
-- 保留 memory GET/POST；memory 服务失败只记日志，不阻断回复生成；LLM 配置错误或请求失败统一走指定中文 fallback。
-- `message_timestamp: str | None` 已加入请求模型，但本任务没有消费该字段，符合 brief 的接口产出要求。
-- 测试只覆盖本任务要求的行为，没有额外扩展功能或引入测试噪声。
+## 自审发现
+
+- memory context 只通过 `POST /v1/users/{user_id}/memory/context` 获取，chat service 自身不再读取旧 `/memories` 路径。
+- 发往 LLM 的 memory 内容只来自 memory-service 已过滤后的 context，并且仅作为 system background message 注入。
+- `message_timestamp` 已同时透传到 context 查询和 turn 存储，符合“只使用 latest user message 之前信息”的时序要求。
+- 日志沿用了 `user_id` 级别信息，没有新增 API key 或 provider secret 泄漏面。
+- `ConversationTurnResponse` 目前只作为接口模型保留，没有增加额外行为；这与 brief 给出的最小实现一致。
 
 ## 疑虑
-- 无
 
-## 实现内容
-- `companion_bot/services/chat.py`
-  - 引入 `load_llm_settings` 与 `generate_chat_reply`。
-  - 新增 `SYSTEM_PROMPT` 和指定的中文 `LLM_FALLBACK_REPLY` 常量。
-  - 将 `build_reply` 改为异步 LLM 调用，只发送 system + 最新用户消息。
-  - `ChatReplyRequest` 增加 `message_timestamp: str | None = None`。
-  - `reply()` 保留 memory 拉取与 interaction note 写入，但不再基于 memory 拼接本地回复。
-- `tests/test_chat_service.py`
-  - 新增“只发送最新消息到 DeepSeek”的成功路径测试，并断言 memory 内容未进入 LLM 请求体。
-  - 新增 DeepSeek 503 时返回指定中文 fallback 的测试。
-  - 更新 memory 服务失败测试，验证 memory 故障不会阻断 LLM 成功回复。
-  - 保留并强化 interaction note POST 载荷断言。
+- 当前测试集只覆盖 `tests/test_chat_service.py`，未扩展到跨服务集成验证；本任务按 brief 未额外增加其他验证。
 
-## 测试命令和结果
-- `./.venv/bin/python -m pytest tests/test_chat_service.py -v`
-  - 结果：FAILED，3 failed。用于 RED。
-- `./.venv/bin/python -m pytest tests/test_chat_service.py tests/test_llm.py -v`
-  - 结果：PASSED，7 passed，1 条 FastAPI/Starlette 现有 warning。
+---
+
+## Task 3 Review 修复方案
+
+- 目标：补齐 reviewer 标记的 Important 测试契约覆盖，并完成一个 Minor 清理，不改变既有 chat-memory 集成行为。
+- 允许修改文件：
+  - `companion_bot/services/chat.py`
+  - `tests/test_chat_service.py`
+- 修复项：
+  1. 在 `/memory/context` 断言中固定请求体必须包含 `channel`、`message_text`、`message_timestamp`。
+  2. 在 LLM fallback 路径断言 reply 返回 fallback 文案后，仍会写入 `/memory/turns`，且 `assistant_reply` 为 fallback 文案。
+  3. 删除 `chat.py` 中未使用的 `ConversationTurnResponse`，前提是确认没有引用。
+  4. 将 `test_chat_reply_uses_deepseek_latest_message_only` 改名为更贴近当前行为的名称。
+- TDD 执行步骤：
+  1. 先改 `tests/test_chat_service.py`，新增/收紧断言并重命名测试。
+  2. 运行 `/home/xuyao/karen/.worktrees/deepseek-llm-connectivity/.venv/bin/python -m pytest tests/test_chat_service.py -v` 验证测试结果。
+  3. 若测试暴露实现缺口，再对 `companion_bot/services/chat.py` 做最小修复。
+  4. 再次运行同一条 pytest 命令，确认结果。
+  5. 追加修复结果、提交 commit `test: strengthen chat memory integration coverage`。
+
+## Task 3 Review 修复结果
+
+- 变更摘要：
+  - `tests/test_chat_service.py`
+    - 将成功路径测试重命名为 `test_chat_reply_includes_memory_context_and_persists_turn`。
+    - 补充 `/memory/context` 请求体断言，固定 `channel`、`message_text`、`message_timestamp` 透传契约。
+    - 在 LLM fallback 测试中补充 `/memory/turns` 写入断言，确认 `assistant_reply` 为 fallback 文案。
+  - `companion_bot/services/chat.py`
+    - 删除未使用的 `ConversationTurnResponse` 模型定义。
+- 测试命令：
+  - `/home/xuyao/karen/.worktrees/deepseek-llm-connectivity/.venv/bin/python -m pytest tests/test_chat_service.py -v`
+- 测试结果：
+  - `5 passed, 1 warning`
+- 说明：
+  - 两个 Important 契约缺口现在都由测试直接保护。
+  - Minor 清理已完成，未改变 chat service 现有行为。

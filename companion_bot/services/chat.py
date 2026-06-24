@@ -38,11 +38,6 @@ class MemoryContextResponse(BaseModel):
     context: dict[str, Any]
 
 
-class ConversationTurnResponse(BaseModel):
-    updated: bool
-    memory_update: dict[str, Any]
-
-
 app = FastAPI(title="companion-chat-service")
 
 
