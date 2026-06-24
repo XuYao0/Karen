@@ -1,4 +1,5 @@
 import json
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -6,6 +7,11 @@ import respx
 from fastapi.testclient import TestClient
 
 from companion_bot.services.chat import LLM_FALLBACK_REPLY, app
+from companion_bot.services.memory import (
+    _agent_memories,
+    _memory_store,
+    app as memory_app,
+)
 
 
 EMPTY_CONTEXT_PAYLOAD = {
@@ -259,3 +265,87 @@ def test_chat_reply_continues_when_memory_service_fails(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"reply_text": "我会陪你慢慢来。"}
+
+
+def test_chat_reply_uses_real_memory_service_contract(monkeypatch):
+    monkeypatch.setenv("MEMORY_SERVICE_URL", "http://memory.test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    _memory_store.clear()
+    _agent_memories.clear()
+    llm_bodies = []
+    original_async_client = httpx.AsyncClient
+
+    class RoutedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self._kwargs = kwargs
+            self._clients = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            for client in self._clients:
+                await client.aclose()
+
+        async def post(self, url, *args, **kwargs):
+            parsed = urlparse(str(url))
+            if parsed.netloc == "memory.test":
+                client = original_async_client(
+                    transport=httpx.ASGITransport(app=memory_app),
+                    base_url="http://memory.test",
+                    timeout=self._kwargs.get("timeout"),
+                )
+                self._clients.append(client)
+                path = parsed.path
+                if parsed.query:
+                    path = f"{path}?{parsed.query}"
+                return await client.post(path, *args, **kwargs)
+
+            if parsed.netloc == "api.deepseek.com":
+                llm_bodies.append(kwargs["json"])
+                reply = f"reply {len(llm_bodies)}"
+                return httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"content": reply}}]},
+                    request=httpx.Request("POST", str(url)),
+                )
+
+            raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(httpx, "AsyncClient", RoutedAsyncClient)
+
+    with TestClient(app) as client:
+        first_response = client.post(
+            "/v1/chat/reply",
+            json={
+                "user_id": "telegram:123",
+                "channel": "telegram",
+                "message_text": "有点饿了",
+                "message_timestamp": "2026-06-22T09:22:00+00:00",
+            },
+        )
+        second_response = client.post(
+            "/v1/chat/reply",
+            json={
+                "user_id": "telegram:123",
+                "channel": "telegram",
+                "message_text": "还想吃甜的",
+                "message_timestamp": "2026-06-22T09:25:00+00:00",
+            },
+        )
+
+    assert first_response.status_code == 200
+    assert first_response.json() == {"reply_text": "reply 1"}
+    assert second_response.status_code == 200
+    assert second_response.json() == {"reply_text": "reply 2"}
+    assert [message["role"] for message in llm_bodies[0]["messages"]] == [
+        "system",
+        "user",
+    ]
+    assert [message["role"] for message in llm_bodies[1]["messages"]] == [
+        "system",
+        "system",
+        "user",
+    ]
+    assert "有点饿了" in llm_bodies[1]["messages"][1]["content"]
+    assert "reply 1" in llm_bodies[1]["messages"][1]["content"]

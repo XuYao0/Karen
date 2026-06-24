@@ -105,7 +105,7 @@ def test_retrieve_context_excludes_future_turns_for_earlier_timestamp():
     }
 
 
-def test_retrieve_context_with_invalid_timestamp_keeps_online_semantics():
+def test_retrieve_context_with_invalid_timestamp_returns_empty_context():
     memory = AgentMemory()
     memory.update(
         ConversationTurn(
@@ -123,6 +123,34 @@ def test_retrieve_context_with_invalid_timestamp_keeps_online_semantics():
             channel="telegram",
             message_text="继续聊",
             message_timestamp="not-a-timestamp",
+        )
+    )
+
+    assert context == {
+        "speaker_state": None,
+        "recent_current_events": [],
+        "compressed_events": [],
+        "known_characters": [],
+    }
+
+
+def test_retrieve_context_without_timestamp_keeps_online_semantics():
+    memory = AgentMemory()
+    memory.update(
+        ConversationTurn(
+            user_id="telegram:123",
+            channel="telegram",
+            message_text="今天有点累",
+            message_timestamp="2026-06-22T10:00:00+00:00",
+            assistant_reply="那我们慢一点。",
+        )
+    )
+
+    context = memory.retrieve_context(
+        ConversationTurn(
+            user_id="telegram:123",
+            channel="telegram",
+            message_text="继续聊",
         )
     )
 
@@ -152,3 +180,28 @@ def test_current_events_are_compressed_after_limit():
     assert len(data["current_events"]) == 2
     assert len(data["compressed_events"]) == 2
     assert data["compressed_events"][-1]["known_scope"] == "compressed_from_observed_history"
+
+
+def test_to_dict_includes_observed_turns_needed_for_timestamp_replay():
+    memory = AgentMemory()
+    memory.update(
+        ConversationTurn(
+            user_id="telegram:123",
+            channel="telegram",
+            message_text="今天有点累",
+            message_timestamp="2026-06-22T10:00:00+00:00",
+            assistant_reply="那我们慢一点。",
+        )
+    )
+
+    data = memory.to_dict()
+
+    assert data["observed_turns"] == [
+        {
+            "user_id": "telegram:123",
+            "channel": "telegram",
+            "message_text": "今天有点累",
+            "message_timestamp": "2026-06-22T10:00:00+00:00",
+            "assistant_reply": "那我们慢一点。",
+        }
+    ]

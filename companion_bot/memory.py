@@ -56,9 +56,12 @@ class AgentMemory:
     max_recent_events_per_person: int = 8
 
     def retrieve_context(self, turn: ConversationTurn) -> dict[str, Any]:
+        if turn.message_timestamp is None:
+            return self._context_snapshot()
+
         boundary = _parse_iso_timestamp(turn.message_timestamp)
         if boundary is None:
-            return self._context_snapshot()
+            return _empty_context()
 
         visible_memory = AgentMemory(
             max_current_events=self.max_current_events,
@@ -108,6 +111,7 @@ class AgentMemory:
             },
             "current_events": [event.to_dict() for event in self.current_events],
             "compressed_events": [event.to_dict() for event in self.compressed_events],
+            "observed_turns": [asdict(turn) for turn in self.observed_turns],
         }
 
     def _context_snapshot(self) -> dict[str, Any]:
@@ -158,6 +162,15 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _empty_context() -> dict[str, Any]:
+    return {
+        "speaker_state": None,
+        "recent_current_events": [],
+        "compressed_events": [],
+        "known_characters": [],
+    }
 
 
 def _characters_for(turn: ConversationTurn) -> list[str]:
